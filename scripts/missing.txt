@@ -1,0 +1,11 @@
+cspdarknet53_iabn
+cspresnext50_iabn
+densenet264d_iabn
+ese_vovnet99b_iabn
+tresnet_l
+tresnet_l_448
+tresnet_m
+tresnet_m_448
+tresnet_m_miil_in21k
+tresnet_xl
+tresnet_xl_448
