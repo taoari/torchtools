@@ -75,6 +75,9 @@ def _output_shape(mod, inputs, output):
     else:
         return () # not collected tensors in custom format
 
+def _param_shape(mod, inputs, output):
+    return [tuple(p.shape) for p in mod.parameters(recurse=False)]
+
 def _param_num(mod, inputs, output):
     if mod._modules:
         return 0  # not collected for non-leaf modules
@@ -132,14 +135,14 @@ def _flops_full(mod, inputs, output):
         res = 0
     return int(res)
 
-def _mem(mod, inputs, output):
-    import numpy as np
-    if hasattr(mod, 'inplace') and mod.inplace == True:
-        res = 0
-    else:
-        shape = _output_shape(mod, inputs, output)
-        res = 1.0 * np.prod(shape) * 4  # (in bytes, 1 float is 4 bytes)
-    return int(res)
+# def _mem(mod, inputs, output):
+#     import numpy as np
+#     if hasattr(mod, 'inplace') and mod.inplace == True:
+#         res = 0
+#     else:
+#         shape = _output_shape(mod, inputs, output)
+#         res = 1.0 * np.prod(shape) * 4  # (in bytes, 1 float is 4 bytes)
+#     return int(res)
 
 @torch.no_grad()
 def _print_summary(model, *inputs):
@@ -158,16 +161,17 @@ def _print_summary(model, *inputs):
         forward.register_extra_hook('module_type', _module_type)
         forward.register_extra_hook('is_leaf', _is_leaf)
         forward.register_extra_hook('output_shape', _output_shape)
+        forward.register_extra_hook('param_shape', _param_shape)
         forward.register_extra_hook('param_num', _param_num)
         forward.register_extra_hook('flops', _flops)
         forward.register_extra_hook('flops_full', _flops_full)
-        forward.register_extra_hook('mem', _mem)
+        # forward.register_extra_hook('mem', _mem)
 
         def print_line(col_names, col_limits):
             print(' '.join([('{:>%d}' % n).format(s) for n, s in zip(col_limits, col_names)]))
 
-        col_names = ['Layer (type)', 'Output shape', 'Param #', 'FLOPs', 'FLOPs full', 'Memory (B)']
-        col_limits = [40, 15, 12, 15, 15, 12]
+        col_names = ['Layer (type)', 'Output shape', 'Param shape', 'Param #', 'FLOPs', 'FLOPs full'] #, 'Memory (B)']
+        col_limits = [40, 15, 15, 12, 15, 15] #, 12]
         total_limit = sum(col_limits) + len(col_limits) - 1
         # print summary head
         print(('-' * total_limit))
@@ -181,10 +185,11 @@ def _print_summary(model, *inputs):
         for _info in forward:
             col_names = ['{} ({})'.format(_info['module_name'], _info['module_type']) + (' *' if _info['is_leaf'] else '  '),
                 'x'.join(map(str, _info['output_shape'])),
+                '+'.join(['x'.join(map(str, shape)) for shape in _info['param_shape']]),
                 '{:,}'.format(_info['param_num']),
                 '{:,}'.format(_info['flops']),
                 '{:,}'.format(_info['flops_full']),
-                '{:,}'.format(_info['mem']),
+                # '{:,}'.format(_info['mem']),
                 ]
             print_line(col_names, col_limits)
         print(('-' * total_limit))
