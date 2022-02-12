@@ -98,6 +98,22 @@ def _flops(mod, inputs, output):
         res = 0
     return int(res)
 
+def __flops_rnn_one_layer(length, batch_size, H_in, H_out, bias):
+    """Refer to nn.RNN.__doc__ for implementation details."""
+    L, N = length, batch_size
+    b = 0.5 if bias else 0.0
+    # N*H_out*H_in for w_ih, N*H_out*H_out for w_hh, 2*N*H_out for tanh
+    return L*(N*H_out*(H_in+b) + N*H_out*(H_out+b) + 2*N*H_out)
+
+def __flops_rnn(num_layers, D, length, batch_size, H_in, H_hidden, H_out, bias):
+    H1s = [H_in] + [H_hidden] * (num_layers-1)
+    H2s = [H_hidden] * (num_layers-1) + [H_out]
+    res = 0.0
+    # D = 2 if bidiretional else 1
+    for H1, H2 in zip(H1s, H2s):
+        res += D * __flops_rnn_one_layer(length, batch_size, H1, H2, bias)
+    return res    
+
 def _flops_full(mod, inputs, output):
     """Calcluate FLOPs (multiply-adds) from module, inputs, and output. (Alternative method)
 
@@ -120,6 +136,30 @@ def _flops_full(mod, inputs, output):
             res = 2.0 * np.prod(shape) # treat divide as multiply, so two multiply-adds (mean-var and gamma-beta)
         else:
             res = 1.0 * np.prod(shape)
+    elif isinstance(mod, torch.nn.RNNBase): # for RNN, LSTM, GRU
+        num_layers = mod.num_layers
+        D = 2 if mod.bidirectional else 1
+        H_in = mod.input_size
+        H_hidden = H_out = mod.hidden_size
+        bias = mod.bias
+        input = inputs[0]
+        batch_size = input.shape[0] if mod.batch_first else input.shape[1]
+        length = input.shape[1] if mod.batch_first else input.shape[0]
+        
+        rnn_flops = __flops_rnn(num_layers, D, length, batch_size, H_in, H_hidden, H_out, bias)
+        
+        if isinstance(mod, torch.nn.RNN):
+            res = rnn_flops
+        elif isinstance(mod, torch.nn.LSTM):
+            res = 4 * rnn_flops # LSTM is 4x
+            # 3: 3 multiply + 1 add, 2: tanh
+            res += (num_layers * D * (3+2) * (batch_size * H_hidden))
+        elif isinstance(mod, torch.nn.GRU):
+            res = 3 * rnn_flops # GRU is 3x
+            # 3: 3 multiply, ignore add and substract
+            res += (num_layers * D * 3 * (batch_size * H_hidden))
+        else:
+            res = 0 # invalid RNN
     elif type(mod).__name__ == 'Attention':
         try:
             # Only for timm.models.vision_transformer.Attention
