@@ -92,15 +92,17 @@ def _flops_full(mod, inputs, output):
         elif isinstance(mod, torch.nn.LSTM):
             res = 4 * rnn_flops # LSTM is 4x
             # 3: 3 multiply + 1 add, 2: tanh
-            res += (num_layers * D * length * (3+2) * (batch_size * H_hidden))
+            res += (num_layers * D * length * (3+2) * (batch_size * H_hidden)) # for sigmoid, tanh, etc.
         elif isinstance(mod, torch.nn.GRU):
             res = 3 * rnn_flops # GRU is 3x
             # 3: 3 multiply, ignore add and substract
-            res += (num_layers * D * length * 3 * (batch_size * H_hidden))
+            res += (num_layers * D * length * 3 * (batch_size * H_hidden)) # for sigmoid, tanh, etc.
         else:
             res = 0 # invalid RNN
     elif type(mod).__name__ == 'Attention':
         try:
+            # import timm
+            # assert isinstance(mod, timm.models.vision_transformer.Attention)
             # Only for timm.models.vision_transformer.Attention
             # Attention has three parts: qkv, attn_aggr, proj. The first and last part is calculated in nn.Linear, we need to add attn_aggr FLOPs (which is done as functional, and is not tracked by module)
             B, N, Cout = shape; Cin = mod.qkv.weight.shape[0]
