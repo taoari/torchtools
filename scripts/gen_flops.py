@@ -10,7 +10,7 @@ from torchtools.utils import print_summary
 
 # Flops for selected models
 ARCHS = [
-	'vgg16', 'vgg19',
+	'vgg16', 'vgg16_bn', 'vgg19', 'vgg19_bn',
 	'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152',
 	'vit_tiny_patch16_224', 'vit_small_patch16_224', 'vit_base_patch16_224', 'vit_large_patch16_224']
 
@@ -29,11 +29,11 @@ for arch in ARCHS:
 df = pd.DataFrame(data)
 
 try:
+	df['flops_basic'] /= 1e9
 	df['flops'] /= 1e9
-	df['flops_full'] /= 1e9
 	df['params'] /= 1e6
 	df['params_with_aux'] /= 1e6
-	# df = df.rename(columns={'flops': 'flops (G)', 'flops_full': 'flops_full (G)',
+	# df = df.rename(columns={'flops_basic': 'flops_basic (G)', 'flops': 'flops (G)',
 	# 	'params': 'params (M)', 'params_with_aux': 'params_with_aux (M)'})
 except Exception as e:
 	print(e)
@@ -61,11 +61,11 @@ df['color'] = df['cat'].apply(lambda x: colors[cat2ind[x]])
 fig = plt.figure()
 ax = None
 for c, group in df.groupby(by='color'):
-	ax = group.plot(kind='line', x='flops_full', y='top1', c=c, linestyle='--', ax=ax)
-	ax = group.plot(kind='scatter', x='flops_full', y='top1', c=c, ax=ax)
+	ax = group.plot(kind='line', x='flops', y='top1', c=c, linestyle='--', ax=ax)
+	ax = group.plot(kind='scatter', x='flops', y='top1', c=c, ax=ax)
 	# Annotate each data point
 	xshift, yshift = 0, 0.25
-	for x, y, txt in zip(df['flops_full'], df['top1'], df['model']):
+	for x, y, txt in zip(df['flops'], df['top1'], df['model']):
 		ax.annotate(txt, (x+xshift, y+yshift), fontsize=6, ha='right')
 ax.get_legend().remove()
 plt.tight_layout()

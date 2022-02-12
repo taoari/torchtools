@@ -28,11 +28,11 @@ for i, arch in enumerate(timm.list_models()):
 		df = pd.DataFrame(data)
 
 		try:
+			df['flops_basic'] /= 1e9
 			df['flops'] /= 1e9
-			df['flops_full'] /= 1e9
 			df['params'] /= 1e6
 			df['params_with_aux'] /= 1e6
-			df = df.rename(columns={'flops': 'flops (G)', 'flops_full': 'flops_full (G)',
+			df = df.rename(columns={'flops': 'flops (G)', 'flops_basic': 'flops_basic (G)',
 				'params': 'params (M)', 'params_with_aux': 'params_with_aux (M)'})
 		except Exception as e:
 			print(e)

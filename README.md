@@ -2,10 +2,9 @@
 
 ## torchtools.utils.print_summary
 
-* **Flops** (base) only calculates for convolution and linear layers (not inlcude bias)
-* **Flops (full)** additionally calculates for bias, normalization (BatchNorm, LayerNorm, GroupNorm), and **attention** layers
-  * activations (e.g. ReLU), operations implemented as functionals are not calculated
-  * Flops calcuation for non-standard layers (e.g. attention) can be complex, please refer to `hooks._flops_full` for details
+* Highlights:
+  * Calculate FLOPs for **RNN, LSTM, GRU**
+  * Calculate FLOPs for **Attention** (in Vision Transformer)
 
 ```python
 import torch
@@ -20,9 +19,8 @@ print_summary(model, inputs)
 ```
 
 ```
-
 ---------------------------------------------------------------------------------------------------------------------
-                            Layer (type)    Output shape     Param shape      Param #           FLOPs      FLOPs full
+                            Layer (type)    Output shape     Param shape      Param #     FLOPs basic           FLOPs
 =====================================================================================================================
                                  Input *     1x3x224x224
                         conv1 (Conv2d) *    1x64x112x112        64x3x7x7        9,408     118,013,952     118,013,952
@@ -106,20 +104,21 @@ Total params: 11,689,512 (44.591949462890625 MB)
 Total params (with aux): 11,689,512 (44.591949462890625 MB)
     Trainable params: 11,689,512 (44.591949462890625 MB)
     Non-trainable params: 0 (0.0 MB)
-Total flops: 1,814,073,344 (1.814073344 billion)
-Total flops (full): 1,819,041,268 (1.819041268 billion)
+Total flops (basic): 1,814,073,344 (1.814073344 billion)
+Total flops: 1,819,041,268 (1.819041268 billion)
 ---------------------------------------------------------------------------------------------------------------------
 NOTE:
     *: leaf modules
-    Flops is measured in multiply-adds, and it only calculates for convolution and linear layers (not inlcude bias)
-    Flops (full) additionally calculates for bias, normalization (BatchNorm, LayerNorm, GroupNorm), and attention layers
-        - multiply, add, divide, exp are treated the same for calculation (1/2 multiply-adds).
+    Flops is measured in multiply-adds. Multiply, add, divide, exp are treated the same for calculation (1/2 multiply-adds).
+    Flops (basic) only calculates for convolution and linear layers (not inlcude bias)
+    Flops additionally calculates for bias, normalization (BatchNorm, LayerNorm, GroupNorm), RNN (RNN, LSTM, GRU) and attention layers
         - activations (e.g. ReLU), operations implemented as functionals (e.g. add in a residual architecture) are not 
           calculated as they are usually neglectable.
+        - complex custom module may need manual calculation for correctness (refer to RNN, LSTM, GRU, Attention as examples).
 ---------------------------------------------------------------------------------------------------------------------
 Out[1]: 
-{'flops': 1814073344,
- 'flops_full': 1819041268,
+{'flops': 1819041268,
+ 'flops_basic': 1814073344,
  'params': 11689512,
  'params_with_aux': 11689512}
 ```
@@ -138,7 +137,7 @@ print_summary(model, inputs)
 
 ```
 ---------------------------------------------------------------------------------------------------------------------
-                            Layer (type)    Output shape     Param shape      Param #           FLOPs      FLOPs full
+                            Layer (type)    Output shape     Param shape      Param #     FLOPs basic           FLOPs
 =====================================================================================================================
                                  Input *     1x3x224x224
              patch_embed.proj (Conv2d) *     1x768x14x14 768x3x16x16+768      590,592     115,605,504     115,680,768
@@ -347,20 +346,21 @@ Total params: 86,415,592 (329.6493225097656 MB)
 Total params (with aux): 86,567,656 (330.2294006347656 MB)
     Trainable params: 86,567,656 (330.2294006347656 MB)
     Non-trainable params: 0 (0.0 MB)
-Total flops: 16,848,500,736 (16.848500736 billion)
-Total flops (full): 19,015,740,404 (19.015740404 billion)
+Total flops (basic): 16,848,500,736 (16.848500736 billion)
+Total flops: 19,015,740,404 (19.015740404 billion)
 ---------------------------------------------------------------------------------------------------------------------
 NOTE:
     *: leaf modules
-    Flops is measured in multiply-adds, and it only calculates for convolution and linear layers (not inlcude bias)
-    Flops (full) additionally calculates for bias, normalization (BatchNorm, LayerNorm, GroupNorm), and attention layers
-        - multiply, add, divide, exp are treated the same for calculation (1/2 multiply-adds).
+    Flops is measured in multiply-adds. Multiply, add, divide, exp are treated the same for calculation (1/2 multiply-adds).
+    Flops (basic) only calculates for convolution and linear layers (not inlcude bias)
+    Flops additionally calculates for bias, normalization (BatchNorm, LayerNorm, GroupNorm), RNN (RNN, LSTM, GRU) and attention layers
         - activations (e.g. ReLU), operations implemented as functionals (e.g. add in a residual architecture) are not 
           calculated as they are usually neglectable.
+        - complex custom module may need manual calculation for correctness (refer to RNN, LSTM, GRU, Attention as examples).
 ---------------------------------------------------------------------------------------------------------------------
 Out[2]: 
-{'flops': 16848500736,
- 'flops_full': 19015740404,
+{'flops': 19015740404,
+ 'flops_basic': 16848500736,
  'params': 86415592,
  'params_with_aux': 86567656}
 ```

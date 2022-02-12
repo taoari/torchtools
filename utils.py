@@ -1,4 +1,4 @@
-from .hooks import _print_summary as print_summary
+from .summary import print_summary
 
 def named_leaf_modules(mod):
     for name, module in mod.named_modules():
