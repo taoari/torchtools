@@ -1,4 +1,5 @@
 from ._summary import print_summary
+from ._viz import plot_network
 
 def named_leaf_modules(mod):
     for name, module in mod.named_modules():
