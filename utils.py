@@ -1,4 +1,4 @@
-from .summary import print_summary
+from ._summary import print_summary
 
 def named_leaf_modules(mod):
     for name, module in mod.named_modules():

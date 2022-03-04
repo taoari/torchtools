@@ -19,9 +19,9 @@ def _param_shape(mod, inputs, output):
     return [tuple(p.shape) for p in mod.parameters(recurse=False)]
 
 def _param_num(mod, inputs, output):
-    if mod._modules:
-        return 0  # not collected for non-leaf modules
-    return sum([param.numel() for param in mod.parameters()])
+    # if mod._modules:
+    #     return 0  # not collected for non-leaf modules # NOTE: custom non-leaf module can have parameters
+    return sum([param.numel() for param in mod.parameters(recurse=False)])
 
 def _flops_basic(mod, inputs, output):
     """Calcluate FLOPs (multiply-adds) from module, inputs, and output.
@@ -63,11 +63,11 @@ def _flops_full(mod, inputs, output):
         # (N*C_{l+1}*H*W)*C_l*K*K/G
         res = 1.0 * np.prod(shape) * mod.in_channels * np.prod(mod.kernel_size) / mod.groups
         if mod.bias is not None:
-            res += np.prod(shape) // 2 # NOTE: for bias, only one add, FLOPs in for multiply-adds, so divide by 2
+            res += np.prod(shape)
     elif isinstance(mod, torch.nn.Linear):
         res = 1.0 * np.prod(shape) * mod.in_features
         if mod.bias is not None:
-            res += np.prod(shape) // 2 # NOTE: for bias, only one add, FLOPs in for multiply-adds, so divide by 2
+            res += np.prod(shape)
     elif isinstance(mod, (torch.nn.modules.batchnorm._BatchNorm, torch.nn.LayerNorm, torch.nn.GroupNorm)):
         # out = (in-mean[c])/sqrt(var[c])*gamma[c]+beta[c]
         # Note: BatchNormXd, GroupNorm use affine, LayerNorm use elmentwise_affine
@@ -107,9 +107,9 @@ def _flops_full(mod, inputs, output):
             # Attention has three parts: qkv, attn_aggr, proj. The first and last part is calculated in nn.Linear, we need to add attn_aggr FLOPs (which is done as functional, and is not tracked by module)
             B, N, Cout = shape; Cin = mod.qkv.weight.shape[0]
             H = mod.num_heads; Cval = Cin // H
-            # N*Cval*N for sim=q.dot(k), N*Cval for softmax, N*N*Cval for sim.dot(v)
+            # N*Cval*N for sim=q.dot(k), 2*N*N for softmax, N*N*Cval for sim.dot(v)
             # for softmax, exp with divide treat as one multipy-add
-            res = 1.0 * B * H * (N * Cval * N + N * Cval + N * N * Cval) 
+            res = 1.0 * B * H * (N * Cval * N + 2 * N * N + N * N * Cval) 
         except Exception as e:
             res = 0
     else:
@@ -130,7 +130,7 @@ def print_summary(model, *inputs):
     # use as torchtools.utils.print_summary
     NOTE = """NOTE:
     *: leaf modules
-    Flops is measured in multiply-adds. Multiply, add, divide, exp are treated the same for calculation (1/2 multiply-adds).
+    Flops is measured in multiply-adds. Multiply, divide, exp are treated the same for calculation, add is ignored except for bias.
     Flops (basic) only calculates for convolution and linear layers (not inlcude bias)
     Flops additionally calculates for bias, normalization (BatchNorm, LayerNorm, GroupNorm), RNN (RNN, LSTM, GRU) and attention layers
         - activations (e.g. ReLU), operations implemented as functionals (e.g. add in a residual architecture) are not 
