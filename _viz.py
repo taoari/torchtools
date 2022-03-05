@@ -244,6 +244,7 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
         inv_edges = _invert_edges(info['edges'])
         for output in info['outputs']:
             all_paths.extend(_dfs_all_paths(inv_edges, output))
+        all_paths = all_paths[::-1] # optional (straighten Input)
 
         ind = argsort([len(p) for p in all_paths])[-1]
         longest_path = all_paths[ind]
