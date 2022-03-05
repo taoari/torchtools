@@ -250,7 +250,7 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
         longest_path_edges = set([(src, dst) for src, dst in zip(longest_path[:-1], longest_path[1:])])
 
         for id_, nd in info['nodes'].items():
-            g.node(id_, label=_get_label(id_, nd, with_node_id), **STYLES[nd['_type']])
+            g.node(id_, label=_get_label(id_, nd, with_node_id), **STYLES[nd['_type'] if '_type' in nd else 'UNKNOWN'])
         for src, dsts in info['edges'].items():
             for dst in dsts:
                 if (src, dst) in longest_path_edges or (dst, src) in longest_path_edges:
@@ -318,9 +318,12 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
         # pprint(subgs)
         # 3) draw
         i = [0]
-        prefixs = [k for k in subgs.keys() if k and '.' not in k and k not in ignore]
+        # prefixs = [k for k in subgs.keys() if k and '.' not in k and k not in ignore]
+        prefixs = list(set([k.split('.', 1)[0] for k in subgs.keys() if k]))
         for _ig in ignore:
             prefixs.extend(list(_get_children(subgs, _ig)))
+        prefixs = set(prefixs).difference(ignore)
+        # print(prefixs)
         for prefix in prefixs:
             _gen_subgraph(g, subgs, prefix, i)
 
@@ -354,7 +357,8 @@ STYLES = dict(DEFAULT=dict(shape='box'), # default style is applied to all nodes
     PARAMETER_FREEZED=dict(style='filled', fillcolor='bisque', fontsize='9'), # light orange
     MODULE=dict(style='filled'), # gray
     GRADFN=dict(style='filled'),
-    BACKWARD=dict(style='filled'),)
+    BACKWARD=dict(style='filled'),
+    UNKNOWN=dict(style='filled', fillcolor='red'),)
     # Backward is the same as GradFn, Backward is traced back from out.grad_fn.next_functions,
     # GradFn is from tensor.grad_fn (in forward hooks)
 
@@ -429,15 +433,35 @@ def test_plot_network():
     ignore = ['blocks'] + ['blocks.{}.drop_path'.format(i) for i in range(12)]
     plot_network(model, inputs, subgraph_level=0, ignore=ignore).save('vit_base_patch16_224_grouped.gv')
 
+def test_plot_network_maskrcnn():
+
     # MaskRCNN
-    model = models.detection.maskrcnn_resnet50_fpn(pretrained=False)
+    # 1) random input
+    import torch
+    import torchvision.models as models
+
+    # model = models.detection.maskrcnn_resnet50_fpn(pretrained=False)
+    # model.eval()
+    # x = [torch.rand(3, 300, 400)]
+    # # predictions = model(x)
+    # plot_network(model, x).save('maskrcnn_resnet50_fpn_random.gv')
+
+    # 2) real input
+    # https://pytorch.org/vision/master/auto_examples/plot_visualization_utils.html
+    from .utils import imread_url
+    from torchvision.transforms.functional import convert_image_dtype
+    import numpy as np
+
+    url = 'https://farm3.staticflickr.com/2373/2421365812_cda8476bb4_z.jpg' 
+    img = torch.tensor(np.array(imread_url(url)).transpose(2,0,1), dtype=torch.uint8) # (3, H, W)
+    batch = convert_image_dtype(torch.stack([img]), dtype=torch.float)
+
+    model = models.detection.maskrcnn_resnet50_fpn(pretrained=True)
     model.eval()
-    x = [torch.rand(3, 300, 400), torch.rand(3, 500, 400)]
-    # predictions = model(x)
-    plot_network(model, x).save('maskrcnn_resnet50_fpn.gv')
-    plot_network(model, x, subgraph_level=0).save('maskrcnn_resnet50_fpn.gv')
-    
+    plot_network(model, batch).save('maskrcnn_resnet50_fpn.gv')
+    plot_network(model, batch, subgraph_level=0, ignore=['backbone', 'backbone.body']).save('maskrcnn_resnet50_fpn_grouped.gv')
 
 if __name__ == '__main__':
     
     test_plot_network()
+    test_plot_network_maskrcnn()

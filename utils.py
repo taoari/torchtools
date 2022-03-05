@@ -29,3 +29,17 @@ def _unwrap_model(model):
 def _get_device(model):
     __first_param = next(model.parameters(), None)
     return torch.device('cpu') if __first_param is None else __first_param.device
+
+
+############################################################
+# Non-Torch
+############################################################
+
+def imread_url(url):
+    from PIL import Image
+    import requests
+    from io import BytesIO
+    
+    response = requests.get(url)
+    img = Image.open(BytesIO(response.content))
+    return img
