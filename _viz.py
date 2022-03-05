@@ -264,7 +264,9 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
         return g
 
     def _get_children(subgs, prefix):
-        children = {k: v for k, v in subgs.items() if k.startswith(prefix) and k != prefix and k[len(prefix)] == '.' and '.' not in k[len(prefix)+1:]}
+        children = [k for k, v in subgs.items() if k.startswith(prefix) and k != prefix and k[len(prefix)] == '.']
+        level = prefix.count('.') + 1
+        children = list(set(['.'.join(c.split('.')[:level+1]) for c in children]))
         return children
 
     # NOTE: subgraph with only one node is not necessary, merge to parent
@@ -275,13 +277,14 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
     def _gen_subgraph(g, subgs, prefix, i):
         nids = subgs[prefix]
         children = _get_children(subgs, prefix)
+        # print(prefix, children)
         with g.subgraph(name='cluster_{}'.format(i[0])) as c: # NOTE: subgraph name must be cluster_<int>
             i[0] += 1
             c.attr(style='dotted')
             for nid in nids:
                 c.node(nid)
             c.attr(label=prefix)
-            for name in children.keys():
+            for name in children:
                 _gen_subgraph(c, subgs, name, i)
 
     # infer node names if missing
@@ -304,9 +307,9 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
                 subgs[sub].append(id_)
             else:
                 subgs[''].append(id_)
-        # 2) remove subgraph has only one node
+        # 2) remove subgraph has only one node, in ignore or .weight/.bias
         for name, nids in list(subgs.items()):
-            if name in ignore or (len(nids) <= 1 and _is_leaf(name, subgs)):
+            if name in ignore or name.endswith('.weight') or name.endswith('.o') or (len(nids) <= 1 and _is_leaf(name, subgs)):
                 ns = name.rsplit('.', 1)
                 new_name = ns[0] if len(ns) == 2 else ''
                 subgs[new_name].extend(nids)
@@ -317,7 +320,7 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
         i = [0]
         prefixs = [k for k in subgs.keys() if k and '.' not in k and k not in ignore]
         for _ig in ignore:
-            prefixs.extend(list(_get_children(subgs, _ig).keys()))
+            prefixs.extend(list(_get_children(subgs, _ig)))
         for prefix in prefixs:
             _gen_subgraph(g, subgs, prefix, i)
 
@@ -399,6 +402,7 @@ def plot_network_tensorboard(model, *inputs, writer=None):
 
 def test_plot_network():
 
+    # ResNet50
     import torch
     import torchvision.models as models
 
@@ -413,6 +417,7 @@ def test_plot_network():
     plot_network(model, inputs, output=output).save('resnet18_grad_fn.gv')
 
 
+    # ViT
     import torch
     import timm.models as models
 
@@ -422,7 +427,16 @@ def test_plot_network():
 
     plot_network(model, inputs).save('vit_base_patch16_224.gv')
     ignore = ['blocks'] + ['blocks.{}.drop_path'.format(i) for i in range(12)]
-    plot_network(model, inputs, subgraph_level=3, ignore=ignore).save('vit_base_patch16_224_grouped.gv')
+    plot_network(model, inputs, subgraph_level=0, ignore=ignore).save('vit_base_patch16_224_grouped.gv')
+
+    # MaskRCNN
+    model = models.detection.maskrcnn_resnet50_fpn(pretrained=False)
+    model.eval()
+    x = [torch.rand(3, 300, 400), torch.rand(3, 500, 400)]
+    # predictions = model(x)
+    plot_network(model, x).save('maskrcnn_resnet50_fpn.gv')
+    plot_network(model, x, subgraph_level=0).save('maskrcnn_resnet50_fpn.gv')
+    
 
 if __name__ == '__main__':
     
