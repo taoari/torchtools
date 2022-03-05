@@ -1,6 +1,8 @@
 import torch
 from .hooks import register_forward_hooks
 
+from collections import defaultdict
+
 import sys
 sys.setrecursionlimit(6000) # default 3000
 
@@ -88,8 +90,7 @@ def _get_info_grad_fn(model, inputs, output):
                     info['edges'][str((id(gf)))].append(str(id(grad_fn)))
                 add_edges(gf)
 
-    from collections import defaultdict
-    info = {'nodes': defaultdict(dict), 'edges': defaultdict(list)}
+    info = {'nodes': defaultdict(dict), 'edges': defaultdict(list), 'outputs': []}
     # info = {'nodes': dict of dict, 'edges': dict of list (graph adjacency list)}
     # info['nodes'][i] = {...}          # node_attrs
     # info['edges'][i] = [j, k, ...]    # adjacent list
@@ -98,6 +99,7 @@ def _get_info_grad_fn(model, inputs, output):
         add_edges(out.grad_fn)
         info['edges'][str(id(out.grad_fn))].append(str(id(out)))
         info['nodes'][str(id(out))].update(dict(_type='OUTPUT'), _class='Output', shape=list(out.shape))
+        info['outputs'].append(str(id(out)))
     # NOTE: inputs and model are only used here
     for in_ in _collect_tensors(inputs):
         info['nodes'][str(id(in_))].update(dict(_type='INPUT'), _class='Input', shape=list(in_.shape))
@@ -117,13 +119,66 @@ def _transfer_forward_hook_info(info, hook):
                 info['nodes'][nid].update(name=_info['module_name'], module_class=type(mod).__name__,
                     module_info=_get_module_info(mod), shape=list(_out.shape))
 
-def _present_graph(info):
-    # info = {'nodes': dict of dict, 'edges': dict of list (graph adjacency list)}
-    # info['nodes'][i] = {...}          # node_attrs
-    # info['edges'][i] = [j, k, ...]    # adjacent list
+def _invert_edges(edges):
+    inv_edges = defaultdict(list) # adjacient list: invert edges is to trace node parents
+    for src, dsts in edges.items():
+        for dst in dsts:
+            inv_edges[dst].append(src)
+    return inv_edges
 
-    def _get_label(id_, nd):
-        strs = []
+def argsort(l):
+    ll = [(e, i) for i, e in enumerate(l)]
+    ll = sorted(ll)
+    return [ee[1] for ee in ll]
+
+def _transfer_node_names(info):
+    nodes, edges = info['nodes'], info['edges']
+
+    from os.path import commonprefix 
+
+    # invert edges to trace back parents
+    inv_edges = _invert_edges(edges)
+
+    # topological sort (dfs from outputs)
+    def _dfs(info, edges, root, res, visited):
+        if root not in visited:
+            children = edges[root] if root in edges else []
+            if not len(children) == 0:
+                for c in children:
+                    _dfs(info, edges, c, res, visited)
+            res.append(root)
+            visited.add(root)
+
+    res = []; visited = set()
+    for out in info['outputs']:
+        _dfs(info, inv_edges, out, res, visited)
+    topo = res # topolical sorted node ids
+
+    # if a node has no name, set its name to the common prefix of its parents
+    for nid in res:
+        nd = nodes[nid]
+        if 'name' not in nd:
+            pa = inv_edges[nid]
+            pa_names = [nodes[_pa]['name'] for _pa in pa if 'name' in nodes[_pa]]
+            if len(pa_names) == 1:
+                nd['name'] = pa_names[0]
+            elif len(pa_names) > 1:
+                levels = [n.count('.') for n in pa_names]
+                ind = levels.index(max(levels)) # argmax
+                name = pa_names[ind].rsplit('.', 1)[0] 
+                # name = commonprefix(pa_names).rstrip('.')
+                nd['name'] = name + '.o' if len(pa_names) >= 2 else name
+
+    return info, topo
+
+def _present_graph(info, subgraph_level=-1, with_node_id=False):
+    # info = {'nodes': dict of dict, 'edges': dict of list (graph adjacency list)}
+    # info['nodes'][id] = {...}          # node_attrs
+    # info['edges'][id] = [j, k, ...]    # adjacent list
+    # subgraph_level: -1 (do not use subgraph), 0 (max level), >=1 (specified level)
+
+    def _get_label(id_, nd, with_node_id):
+        strs = [] if not with_node_id else [id_]
         if 'name' in nd:
             strs.append(nd['name'])
         if '_class' in nd:
@@ -151,17 +206,112 @@ def _present_graph(info):
             strs.append('(' + ','.join(map(str, nd['shape'])) + ')')
         return '\n'.join(strs)
 
+    # def _graph_split(info, sub):
+    #     sub = set(sub)
+    #     info1 = dict(nodes=defaultdict(list), edges=defaultdict(list))
+    #     info2 = dict(nodes=defaultdict(list), edges=defaultdict(list))
+
+    #     for id_, nd in info['nodes'].items():
+    #         if id_ in sub:
+    #             info1['nodes'][id_] = nd
+
+    #     for src, dsts in info['edges'].items():
+    #         for dst in dsts:
+    #             if src in sub and dst in sub:
+    #                 info1['edges'][src].append(dst)
+    #             else:
+    #                 info2['edges'][src].append(dst)
+    #                 info2['nodes'][src] = info['nodes'][src]
+    #                 info2['nodes'][dst] = info['nodes'][dst]
+    #     return info1, info2
+
+    def _dfs_all_paths(G,v,seen=None,path=None):
+        if seen is None: seen = set()
+        if path is None: path = [v]
+
+        seen.add(v)
+
+        paths = []
+        for t in G[v]:
+            if t not in seen:
+                t_path = path + [t]
+                paths.append(tuple(t_path))
+                paths.extend(_dfs_all_paths(G, t, seen, t_path))
+        return paths
+
+    def _gen_dot(g, info):
+        all_paths = []
+        inv_edges = _invert_edges(info['edges'])
+        for output in info['outputs']:
+            all_paths.extend(_dfs_all_paths(inv_edges, output))
+
+        ind = argsort([len(p) for p in all_paths])[-1]
+        longest_path = all_paths[ind]
+        longest_path_edges = set([(src, dst) for src, dst in zip(longest_path[:-1], longest_path[1:])])
+
+        for id_, nd in info['nodes'].items():
+            g.node(id_, label=_get_label(id_, nd, with_node_id), **STYLES[nd['_type']])
+        for src, dsts in info['edges'].items():
+            for dst in dsts:
+                if (src, dst) in longest_path_edges or (dst, src) in longest_path_edges:
+                    g.edge(src, dst, weight='5')
+                else:
+                    g.edge(src, dst)
+                # if '_class' in info['nodes'][src] and info['nodes'][src]['_class'] in ['Parameter', 'TBackward']:
+                #     g.edge(src, dst)
+                # else:
+                #     g.edge(src, dst, weight='5') # make non-parameter edges large weight to straighten the graph
+        return g
+
+    # NOTE: subgraph with only one node is not necessary, merge to parent
+    def _is_leaf(name, subgs):
+        children = [n for n in subgs.keys() if n.startswith(name)]
+        return len(children) == 1
+
+    def _gen_subgraph(g, subgs, prefix, i):
+        nids = subgs[prefix]
+        children = {k: v for k, v in subgs.items() if k.startswith(prefix) and k != prefix and '.' not in k[len(prefix)+1:]}
+        with g.subgraph(name='cluster_{}'.format(i[0])) as c: # NOTE: subgraph name must be cluster_<int>
+            i[0] += 1
+            c.attr(style='dotted')
+            for nid in nids:
+                c.node(nid)
+            c.attr(label=prefix)
+            for name in children.keys():
+                _gen_subgraph(c, subgs, name, i)
+
+    # infer node names if missing
+    info, _ = _transfer_node_names(info)
+
     # draw dot graph
     import graphviz
     g = graphviz.Digraph(node_attr=STYLES['DEFAULT'])
-    for id_, nd in info['nodes'].items():
-        g.node(id_, label=_get_label(id_, nd), **STYLES[nd['_type']])
-    for src, dsts in info['edges'].items():
-        for dst in dsts:
-            if '_class' in info['nodes'][src] and info['nodes'][src]['_class'] in ['Parameter', 'TBackward']:
-                g.edge(src, dst)
+    # g.attr(splines='false')
+    g = _gen_dot(g, info)
+
+    # draw subgraph
+    if subgraph_level >= 0:
+        # 1) construct
+        subgs = defaultdict(list)
+        for id_, nd in info['nodes'].items():
+            if 'name' in nd:
+                sub = '.'.join(nd['name'].split('.')[:subgraph_level]) if subgraph_level >= 1 else nd['name']
+                subgs[sub].append(id_)
             else:
-                g.edge(src, dst, weight='5') # make non-parameter edges large weight to straighten the graph
+                subgs[''].append(id_)
+        # 2) remove subgraph has only one node
+        for name, nids in list(subgs.items()):
+            if len(nids) <= 1 and _is_leaf(name, subgs):
+                ns = name.rsplit('.', 1)
+                new_name = ns[0] if len(ns) == 2 else ''
+                subgs[new_name].extend(nids)
+                del subgs[name]
+        # 3) draw
+        i = [0]
+        prefixs = [k for k in subgs.keys() if k and '.' not in k]
+        for prefix in prefixs:
+            _gen_subgraph(g, subgs, prefix, i)
+
     return g
 
 def _backup_requires_grad(model, inputs):
@@ -197,7 +347,7 @@ STYLES = dict(DEFAULT=dict(shape='box'), # default style is applied to all nodes
     # GradFn is from tensor.grad_fn (in forward hooks)
 
 
-def plot_network(model, *inputs, output=None):
+def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=False):
     # NOTE: 1. str(id(grad_fn)) can be changed when trace back output.grad_fn
     #          must trace back out.grad_fn first, and then call str(id(tensor.grad_fn)) can keep. WHY??
     # 2. inputs (GradFn) -> Module -> output(s) (GradFn) (forward hook)
@@ -223,7 +373,7 @@ def plot_network(model, *inputs, output=None):
         if not param.requires_grad:
             info['nodes'][str(id(param))].update(dict(_type='PARAMETER_FREEZED',
                 _class=type(param).__name__, name=name))
-    g = _present_graph(info)
+    g = _present_graph(info, subgraph_level, with_node_id)
     return g
 
 def plot_network_tensorboard(model, *inputs, writer=None):
@@ -248,9 +398,21 @@ def test_plot_network():
     inputs = torch.randn(1, 3, 224, 224).to(device)
 
     plot_network(model, inputs).save('resnet18.gv')
+    plot_network(model, inputs, subgraph_level=0).save('resnet18_grouped.gv')
 
     output = model(inputs)
     plot_network(model, inputs, output=output).save('resnet18_grad_fn.gv')
+
+
+    import torch
+    import timm.models as models
+
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    model = models.vit_base_patch16_224().to(device)
+    inputs = torch.randn(1, 3, 224, 224).to(device)
+
+    plot_network(model, inputs).save('vit_base_patch16_224.gv')
+    plot_network(model, inputs, subgraph_level=2).save('vit_base_patch16_224_grouped.gv')
 
 if __name__ == '__main__':
     
