@@ -171,7 +171,7 @@ def _transfer_node_names(info):
 
     return info, topo
 
-def _present_graph(info, subgraph_level=-1, with_node_id=False):
+def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
     # info = {'nodes': dict of dict, 'edges': dict of list (graph adjacency list)}
     # info['nodes'][id] = {...}          # node_attrs
     # info['edges'][id] = [j, k, ...]    # adjacent list
@@ -263,6 +263,10 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False):
                 #     g.edge(src, dst, weight='5') # make non-parameter edges large weight to straighten the graph
         return g
 
+    def _get_children(subgs, prefix):
+        children = {k: v for k, v in subgs.items() if k.startswith(prefix) and k != prefix and k[len(prefix)] == '.' and '.' not in k[len(prefix)+1:]}
+        return children
+
     # NOTE: subgraph with only one node is not necessary, merge to parent
     def _is_leaf(name, subgs):
         children = [n for n in subgs.keys() if n.startswith(name)]
@@ -270,7 +274,7 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False):
 
     def _gen_subgraph(g, subgs, prefix, i):
         nids = subgs[prefix]
-        children = {k: v for k, v in subgs.items() if k.startswith(prefix) and k != prefix and '.' not in k[len(prefix)+1:]}
+        children = _get_children(subgs, prefix)
         with g.subgraph(name='cluster_{}'.format(i[0])) as c: # NOTE: subgraph name must be cluster_<int>
             i[0] += 1
             c.attr(style='dotted')
@@ -290,6 +294,7 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False):
     g = _gen_dot(g, info)
 
     # draw subgraph
+    ignore = set(ignore)
     if subgraph_level >= 0:
         # 1) construct
         subgs = defaultdict(list)
@@ -301,14 +306,18 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False):
                 subgs[''].append(id_)
         # 2) remove subgraph has only one node
         for name, nids in list(subgs.items()):
-            if len(nids) <= 1 and _is_leaf(name, subgs):
+            if name in ignore or (len(nids) <= 1 and _is_leaf(name, subgs)):
                 ns = name.rsplit('.', 1)
                 new_name = ns[0] if len(ns) == 2 else ''
                 subgs[new_name].extend(nids)
                 del subgs[name]
+        # from pprint import pprint
+        # pprint(subgs)
         # 3) draw
         i = [0]
-        prefixs = [k for k in subgs.keys() if k and '.' not in k]
+        prefixs = [k for k in subgs.keys() if k and '.' not in k and k not in ignore]
+        for _ig in ignore:
+            prefixs.extend(list(_get_children(subgs, _ig).keys()))
         for prefix in prefixs:
             _gen_subgraph(g, subgs, prefix, i)
 
@@ -347,7 +356,7 @@ STYLES = dict(DEFAULT=dict(shape='box'), # default style is applied to all nodes
     # GradFn is from tensor.grad_fn (in forward hooks)
 
 
-def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=False):
+def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=False, ignore=[]):
     # NOTE: 1. str(id(grad_fn)) can be changed when trace back output.grad_fn
     #          must trace back out.grad_fn first, and then call str(id(tensor.grad_fn)) can keep. WHY??
     # 2. inputs (GradFn) -> Module -> output(s) (GradFn) (forward hook)
@@ -373,7 +382,7 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
         if not param.requires_grad:
             info['nodes'][str(id(param))].update(dict(_type='PARAMETER_FREEZED',
                 _class=type(param).__name__, name=name))
-    g = _present_graph(info, subgraph_level, with_node_id)
+    g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore)
     return g
 
 def plot_network_tensorboard(model, *inputs, writer=None):
@@ -412,7 +421,8 @@ def test_plot_network():
     inputs = torch.randn(1, 3, 224, 224).to(device)
 
     plot_network(model, inputs).save('vit_base_patch16_224.gv')
-    plot_network(model, inputs, subgraph_level=2).save('vit_base_patch16_224_grouped.gv')
+    ignore = ['blocks'] + ['blocks.{}.drop_path'.format(i) for i in range(12)]
+    plot_network(model, inputs, subgraph_level=3, ignore=ignore).save('vit_base_patch16_224_grouped.gv')
 
 if __name__ == '__main__':
     
