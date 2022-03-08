@@ -172,7 +172,7 @@ def _transfer_node_names(info):
 
     return info, topo
 
-def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
+def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=False):
     # info = {'nodes': dict of dict, 'edges': dict of list (graph adjacency list)}
     # info['nodes'][id] = {...}          # node_attrs
     # info['edges'][id] = [j, k, ...]    # adjacent list
@@ -289,8 +289,9 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[]):
             for name in children:
                 _gen_subgraph(c, subgs, name, i)
 
-    # infer node names if missing
-    info, _ = _transfer_node_names(info)
+    if transfer_names:
+        # infer node names if missing
+        info, _ = _transfer_node_names(info)
 
     # draw dot graph
     import graphviz
@@ -365,7 +366,7 @@ STYLES = dict(DEFAULT=dict(shape='box'), # default style is applied to all nodes
     # GradFn is from tensor.grad_fn (in forward hooks)
 
 
-def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=False, ignore=[]):
+def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=True):
     # NOTE: 1. str(id(grad_fn)) can be changed when trace back output.grad_fn
     #          must trace back out.grad_fn first, and then call str(id(tensor.grad_fn)) can keep. WHY??
     # 2. inputs (GradFn) -> Module -> output(s) (GradFn) (forward hook)
@@ -386,16 +387,17 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
         _recover_requires_grad(params_status)
     else:
         info = _get_info_grad_fn(model, inputs, output)
+
     # update for freezed parameters
     for name, param in model.named_parameters():
         if not param.requires_grad:
             info['nodes'][str(id(param))].update(dict(_type='PARAMETER_FREEZED',
                 _class=type(param).__name__, name=name))
-    g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore)
+    g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore, transfer_names=transfer_names)
     return g
 
 
-def plot_network_callback(models, callback, kwargs, subgraph_level=-1, with_node_id=False, ignore=[]):
+def plot_network_callback(models, callback, kwargs, subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=True):
     if isinstance(models, torch.nn.Module):
         model = models
     else:
@@ -411,12 +413,13 @@ def plot_network_callback(models, callback, kwargs, subgraph_level=-1, with_node
         info = _get_info_grad_fn(model, [], output)
         _transfer_forward_hook_info(info, forward) # optional (but for more module info)
     _recover_requires_grad(params_status)
+
     # update for freezed parameters
     for name, param in model.named_parameters():
         if not param.requires_grad:
             info['nodes'][str(id(param))].update(dict(_type='PARAMETER_FREEZED',
                 _class=type(param).__name__, name=name))
-    g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore)
+    g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore, transfer_names=transfer_names)
     return g
 
 
@@ -474,7 +477,7 @@ def test_plot_network_callback():
         return output
     
     kwargs = dict(model=model, size=384)
-    plot_network_callback((model,), callback, kwargs).save('resnet18_callback.gv')
+    plot_network_callback((model,), callback, kwargs, transfer_names=False).save('resnet18_callback.gv')
 
 def test_plot_network_maskrcnn():
 
