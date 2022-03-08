@@ -12,6 +12,7 @@ sys.setrecursionlimit(6000) # default 3000
 # def _beautify(name):
 #     return '\n'.join(chunk_string(name, 20))
 
+
 def _collect_tensors(out):
     if torch.is_tensor(out):
         yield out
@@ -397,20 +398,28 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
     return g
 
 
-def plot_network_callback(models, callback, kwargs, subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=True):
-    if isinstance(models, torch.nn.Module):
+# for plot_network_callback, if both networks (possible multiple) and inputs are constructed inside callback
+# need to manually add them inside the code, especially many levels of callbacks (e.g. NeRF).
+# they are cleared at the end of plot_network_callback
+# MODELS = []
+INPUTS = []
+
+def plot_network_callback(callback, kwargs, models=[], inputs=[], subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=True):
+    # models = models + MODELS (MODELS must be pre-collected outside out callback
+    if isinstance(models, torch.nn.Module): # single model
         model = models
     else:
-        model = torch.nn.Module()
+        model = torch.nn.Module() # mutiple models (e.g. NeRF has network_fn, network_fine, embed_pts, embed_dirs
         for i, mod in enumerate(models):
             setattr(model, 'net{}'.format(i), mod)
         
-    params_status = _backup_requires_grad(model, []) # also set_requires_grad to True to trace back
+    params_status = _backup_requires_grad(model, inputs) # also set_requires_grad to True to trace back
     with register_forward_hooks(model) as forward:
         model.eval()
         with torch.set_grad_enabled(True):
             output = callback(**kwargs)
-        info = _get_info_grad_fn(model, [], output)
+        inputs = inputs + INPUTS # additional INPUTS collected inside callback, additional MODELS collected inside callback is too late (should before registering hooks)
+        info = _get_info_grad_fn(model, inputs, output)
         _transfer_forward_hook_info(info, forward) # optional (but for more module info)
     _recover_requires_grad(params_status)
 
@@ -420,6 +429,9 @@ def plot_network_callback(models, callback, kwargs, subgraph_level=-1, with_node
             info['nodes'][str(id(param))].update(dict(_type='PARAMETER_FREEZED',
                 _class=type(param).__name__, name=name))
     g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore, transfer_names=transfer_names)
+    # Cleanup
+    # MODELS.clear()
+    INPUTS.clear()
     return g
 
 
@@ -477,7 +489,28 @@ def test_plot_network_callback():
         return output
     
     kwargs = dict(model=model, size=384)
-    plot_network_callback((model,), callback, kwargs, transfer_names=False).save('resnet18_callback.gv')
+    models = [model]
+    plot_network_callback(callback, kwargs, models=[model], transfer_names=False).save('resnet18_callback.gv')
+
+def test_plot_network_callback2():
+    import torch
+    import torchvision.models as models
+
+    device = torch.device('cpu') if torch.cuda.is_available() else torch.device('cpu')
+
+    # NOTE: models must be pre-collected for registration to infer output_shape and module_name info, otherwise will not show such info
+    def callback2(size=224):
+        model = models.resnet18().to(device)
+        inputs = torch.randn(1, 3, size, size).to(device)
+        ##### model and inputs are not accessible from outside, need to insert codes to keep track of them for viz
+        # MODELS.append(model)
+        INPUTS.append(inputs)
+        ##### end
+        output = model(inputs)
+        return output
+
+    plot_network_callback(callback2, kwargs={}, transfer_names=False).save('resnet18_callback2.gv')
+    
 
 def test_plot_network_maskrcnn():
 
@@ -512,3 +545,4 @@ if __name__ == '__main__':
     test_plot_network()
     test_plot_network_maskrcnn()
     test_plot_network_callback()
+    test_plot_network_callback2()
