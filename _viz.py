@@ -103,9 +103,10 @@ def _get_info_grad_fn(model, inputs, output):
     # NOTE: inputs and model are only used here
     for in_ in _collect_tensors(inputs):
         info['nodes'][str(id(in_))].update(dict(_type='INPUT'), _class='Input', shape=list(in_.shape))
-    for name, param in model.named_parameters():
-        # NOTE: can introduced not traced back parameters for MaskRCNN (defined but not used??)
-        info['nodes'][str(id(param))].update(dict(_type='PARAMETER', _class=type(param).__name__, name=name, shape=list(param.shape)))
+    if model is not None:
+        for name, param in model.named_parameters():
+            # NOTE: can introduced not traced back parameters for MaskRCNN (defined but not used??)
+            info['nodes'][str(id(param))].update(dict(_type='PARAMETER', _class=type(param).__name__, name=name, shape=list(param.shape)))
     return info
 
 def _transfer_forward_hook_info(info, hook):
@@ -393,6 +394,32 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
     g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore)
     return g
 
+
+def plot_network_callback(models, callback, kwargs, subgraph_level=-1, with_node_id=False, ignore=[]):
+    if isinstance(models, torch.nn.Module):
+        model = models
+    else:
+        model = torch.nn.Module()
+        for i, mod in enumerate(models):
+            setattr(model, 'net{}'.format(i), mod)
+        
+    params_status = _backup_requires_grad(model, []) # also set_requires_grad to True to trace back
+    with register_forward_hooks(model) as forward:
+        model.eval()
+        with torch.set_grad_enabled(True):
+            output = callback(**kwargs)
+        info = _get_info_grad_fn(model, [], output)
+        _transfer_forward_hook_info(info, forward) # optional (but for more module info)
+    _recover_requires_grad(params_status)
+    # update for freezed parameters
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            info['nodes'][str(id(param))].update(dict(_type='PARAMETER_FREEZED',
+                _class=type(param).__name__, name=name))
+    g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore)
+    return g
+
+
 def plot_network_tensorboard(model, *inputs, writer=None):
     model.eval()
 
@@ -433,6 +460,21 @@ def test_plot_network():
     plot_network(model, inputs).save('vit_base_patch16_224.gv')
     ignore = ['blocks'] + ['blocks.{}.drop_path'.format(i) for i in range(12)]
     plot_network(model, inputs, subgraph_level=0, ignore=ignore).save('vit_base_patch16_224_grouped.gv')
+    
+def test_plot_network_callback():
+    import torch
+    import torchvision.models as models
+
+    device = torch.device('cpu') if torch.cuda.is_available() else torch.device('cpu')
+    model = models.resnet18().to(device)
+        
+    def callback(model, size):
+        inputs = torch.randn(1, 3, size, size).to(device)
+        output = model(inputs)
+        return output
+    
+    kwargs = dict(model=model, size=384)
+    plot_network_callback((model,), callback, kwargs).save('resnet18_callback.gv')
 
 def test_plot_network_maskrcnn():
 
@@ -466,3 +508,4 @@ if __name__ == '__main__':
     
     test_plot_network()
     test_plot_network_maskrcnn()
+    test_plot_network_callback()
