@@ -404,6 +404,17 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
 # MODELS = []
 INPUTS = []
 
+# aux functions
+def add_inputs(*args):
+    for arg in args:
+        if torch.is_tensor(arg):
+            INPUTS.append(arg)
+            arg.requires_grad = True
+
+def clear_inputs():
+    INPUTS.clear()
+
+
 def plot_network_callback(callback, kwargs, models=[], inputs=[], subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=True):
     # models = models + MODELS (MODELS must be pre-collected outside out callback
     if isinstance(models, torch.nn.Module): # single model
