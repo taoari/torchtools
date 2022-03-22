@@ -126,7 +126,7 @@ def _flops_full(mod, inputs, output):
 #     return int(res)
 
 @torch.no_grad()
-def print_summary(model, *inputs):
+def print_summary(model, *inputs, **kwargs):
     # use as torchtools.utils.print_summary
     NOTE = """NOTE:
     *: leaf modules
@@ -139,7 +139,7 @@ def print_summary(model, *inputs):
     """
     with register_forward_hooks(model) as forward:
         model.eval()
-        outputs = model(*inputs)
+        outputs = model(*inputs, **kwargs)
         forward.register_extra_hook('module_type', _module_type)
         forward.register_extra_hook('is_leaf', _is_leaf)
         forward.register_extra_hook('output_shape', _output_shape)
@@ -163,6 +163,9 @@ def print_summary(model, *inputs):
         for x in inputs:
             if hasattr(x, 'shape'): # torch.Tensor or ndarray
                 col_names = ['Input' + ' *', 'x'.join(map(str, x.shape))]; print_line(col_names, col_limits)
+        for name, x in kwargs.items():
+            if hasattr(x, 'shape'): # torch.Tensor or ndarray
+                col_names = ['Input ({})'.format(name) + ' *', 'x'.join(map(str, x.shape))]; print_line(col_names, col_limits)
         # print model leaf modules
         for _info in forward:
             col_names = ['{} ({})'.format(_info['module_name'], _info['module_type']) + (' *' if _info['is_leaf'] else '  '),

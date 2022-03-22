@@ -12,6 +12,8 @@ sys.setrecursionlimit(6000) # default 3000
 # def _beautify(name):
 #     return '\n'.join(chunk_string(name, 20))
 
+def _to_leaf(*args):
+    return tuple([arg.detach() for arg in args])
 
 def _collect_tensors(out):
     if torch.is_tensor(out):
@@ -335,6 +337,7 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[], trans
 
 def _backup_requires_grad(model, inputs):
     # record requires_grad status for inputs and parameters
+    # NOTE: requires_grad can only be changed for leaf and float tensors
     params_status = {}
     for t in _collect_tensors(inputs):
         params_status[t] = t.requires_grad
@@ -354,7 +357,7 @@ def _recover_requires_grad(params_status):
 
 
 STYLES = dict(DEFAULT=dict(shape='box'), # default style is applied to all nodes, default fontsize: 14
-    INPUT=dict(style='filled', fillcolor='slateblue'),
+    INPUT=dict(style='filled', fillcolor='orchid'),
     OUTPUT=dict(style='filled', fillcolor='slateblue'),
     INTERMEDIATE=dict(),
     PARAMETER=dict(style='filled', fillcolor='orange', fontsize='9'),
@@ -367,7 +370,7 @@ STYLES = dict(DEFAULT=dict(shape='box'), # default style is applied to all nodes
     # GradFn is from tensor.grad_fn (in forward hooks)
 
 
-def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=True):
+def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=False, ignore=[], transfer_names=True, **kwargs):
     # NOTE: 1. str(id(grad_fn)) can be changed when trace back output.grad_fn
     #          must trace back out.grad_fn first, and then call str(id(tensor.grad_fn)) can keep. WHY??
     # 2. inputs (GradFn) -> Module -> output(s) (GradFn) (forward hook)
@@ -377,17 +380,18 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
     #   DELEGATE Module, Output Tensor to Output Tensor GradFn
     # 3. AccumulateGrad (BackwardFn) -> Parameter
     #   DELEGATE AccumulateGrad to Parameter
+    all_inputs = _to_leaf(*(inputs + tuple(_collect_tensors(kwargs))))
     if output is None:
-        params_status = _backup_requires_grad(model, inputs) # also set_requires_grad to True to trace back
+        params_status = _backup_requires_grad(model, all_inputs) # also set_requires_grad to True to trace back
         with register_forward_hooks(model) as forward:
             model.eval()
             with torch.set_grad_enabled(True):
-                output = model(*inputs)
-            info = _get_info_grad_fn(model, inputs, output)
+                output = model(*inputs, **kwargs)
+            info = _get_info_grad_fn(model, all_inputs, output)
             _transfer_forward_hook_info(info, forward) # optional (but for more module info)
         _recover_requires_grad(params_status)
     else:
-        info = _get_info_grad_fn(model, inputs, output)
+        info = _get_info_grad_fn(model, all_inputs, output)
 
     # update for freezed parameters
     for name, param in model.named_parameters():
