@@ -183,7 +183,7 @@ def _present_graph(info, subgraph_level=-1, with_node_id=False, ignore=[], trans
 
     def _get_label(id_, nd, with_node_id):
         strs = [] if not with_node_id else [id_]
-        if 'name' in nd:
+        if 'name' in nd and nd['name']:
             strs.append(nd['name'])
         if '_class' in nd:
             if nd['_class'] not in ['Parameter']: # remove Parameter as it is obvious to see from the color
@@ -357,8 +357,9 @@ def _recover_requires_grad(params_status):
 
 
 STYLES = dict(DEFAULT=dict(shape='box'), # default style is applied to all nodes, default fontsize: 14
+    INFO=dict(style='filled', fillcolor='slateblue'),
     INPUT=dict(style='filled', fillcolor='orchid'),
-    OUTPUT=dict(style='filled', fillcolor='slateblue'),
+    OUTPUT=dict(style='filled', fillcolor='darkorchid'),
     INTERMEDIATE=dict(),
     PARAMETER=dict(style='filled', fillcolor='orange', fontsize='9'),
     PARAMETER_FREEZED=dict(style='filled', fillcolor='bisque', fontsize='9'), # light orange
@@ -380,13 +381,17 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
     #   DELEGATE Module, Output Tensor to Output Tensor GradFn
     # 3. AccumulateGrad (BackwardFn) -> Parameter
     #   DELEGATE AccumulateGrad to Parameter
-    all_inputs = _to_leaf(*(inputs + tuple(_collect_tensors(kwargs))))
+    all_inputs = inputs + tuple(_collect_tensors(kwargs))
+    total_flops = 0
     if output is None:
         params_status = _backup_requires_grad(model, all_inputs) # also set_requires_grad to True to trace back
         with register_forward_hooks(model) as forward:
             model.eval()
             with torch.set_grad_enabled(True):
                 output = model(*inputs, **kwargs)
+            from ._summary import _flops_full
+            forward.register_extra_hook('flops_full', _flops_full)
+            total_flops = sum([_info['flops_full'] for _info in forward])
             info = _get_info_grad_fn(model, all_inputs, output)
             _transfer_forward_hook_info(info, forward) # optional (but for more module info)
         _recover_requires_grad(params_status)
@@ -399,6 +404,8 @@ def plot_network(model, *inputs, output=None, subgraph_level=-1, with_node_id=Fa
             info['nodes'][str(id(param))].update(dict(_type='PARAMETER_FREEZED',
                 _class=type(param).__name__, name=name))
     g = _present_graph(info, subgraph_level, with_node_id, ignore=ignore, transfer_names=transfer_names)
+    _info = ['Flops: {:,}'.format(total_flops), 'Params: {:,}'.format(sum(p.numel() for p in model.parameters()))]
+    g.node('flops_and_params', label='\n'.join(_info), **STYLES['INFO'])
     return g
 
 
