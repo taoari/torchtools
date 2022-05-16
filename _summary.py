@@ -3,8 +3,31 @@ import torch
 from .hooks import register_forward_hooks
 
 
+def _get_module_info(mod):
+    # format: kxk/s/p/d:<dilation>/g:<group>
+    strs = []
+    try:
+        if hasattr(mod, 'kernel_size'):
+            strs.append('x'.join(map(str, mod.kernel_size)))
+        if hasattr(mod, 'stride'):
+            strs.append(str(mod.stride[0]) if mod.stride[0] == mod.stride[1] else 'x'.join(map(str, mod.stride)))
+        if hasattr(mod, 'padding'):
+            strs.append(str(mod.padding[0]) if mod.padding[0] == mod.padding[1] else 'x'.join(map(str, mod.padding)))
+        if hasattr(mod, 'dilation'):
+            if max(mod.dilation) > 1:
+                strs.append('d:'+str(mod.dilation[0]) if mod.dilation[0] == mod.dilation[1] else 'x'.join(map(str, mod.dilation)))
+        if hasattr(mod, 'groups'):
+            if mod.groups > 1:
+                strs.append('g:'+str(mod.groups))
+        if hasattr(mod, 'inplace') and mod.inplace:
+            strs.append('inplace')
+    except Exception as e:
+        print(e)
+    return '/'.join(strs)
+
+
 def _module_type(mod, inputs, output):
-    return type(mod).__name__
+    return ':'.join([type(mod).__name__, _get_module_info(mod)])
 
 def _is_leaf(mod, inputs, output):
     return len(mod._modules) == 0
